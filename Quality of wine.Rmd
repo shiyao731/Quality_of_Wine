@@ -1,0 +1,1110 @@
+---
+title: "Qulity of wine"
+author: "Yao Shi"
+date: "Octorber 20, 2019"
+output: pdf_document
+---
+
+```{r}
+wine <- new.env()
+```
+
+# Task 1
+```{r}
+wine$data <- read.csv("C:\\Users\\Yao\\Desktop\\course for 17fall\\6341 machine learning\\project\\project2\\winequality-white.csv",sep = ";")
+```
+
+## Preprocessing
+```{r}
+wine$data[,12] <- ifelse(wine$data[,12]>5,1,0)
+wine$data <- as.data.frame(wine$data)
+names(wine$data)[12]="quality"
+wine$data$quality <- as.factor(wine$data$quality)
+wine$kmeans.task <- makeClusterTask(data = wine$data[,-12])
+```
+
+## Kmeans model
+## Determine the number of clusters
+```{r}
+wssplot <- function(data, nc=15, seed=1234){
+  require(ggplot2)
+  wss <- (nrow(data)-1)*sum(apply(data,2,var))
+  for (i in 2:nc){
+    set.seed(seed)
+    wss[i] <- sum(kmeans(data, centers=i)$withinss)
+  }
+  return(ggplot(mapping =aes(x = 1:nc, y = wss)) + 
+           geom_line()+geom_point() + 
+           labs(x = "Number of Clusters", y = "Within clusters sum of squares"))
+}
+```
+
+```{r}
+wine$wssplot <- wssplot(wine$kmeans.task$env$data)
+print(wine$wssplot)
+```
+Choose 4 as number of clusters
+
+```{r}
+wine$kmeans.lrn <- makeLearner("cluster.kmeans")
+set.seed(1234)
+wine$kmeans.lrn <- setHyperPars(wine$kmeans.lrn, centers = 4)
+wine$kmeans.mod <- mlr::train(learner = wine$kmeans.lrn, task = wine$kmeans.task)
+wine$kmeans.pred <- predict(wine$kmeans.mod, task = wine$kmeans.task)
+```
+
+```{r}
+wine$cluster.data <- cbind.data.frame(wine$kmeans.task$env$data, quality = wine$data$quality,
+                                      cluster = as.factor(wine$kmeans.pred$data$response))
+```
+
+
+```{r}
+ggplot(data = wine$cluster.data)+geom_point(mapping = aes(x = alcohol, y = residual.sugar, colour = cluster))
+```
+
+```{r}
+wine$cluster.table <- aggregate.data.frame(x = wine$cluster.data$quality,
+                                           by = list(cluster = wine$cluster.data$cluster), FUN = table)
+colnames(wine$cluster.table$x) <- c("bad", "good")
+wine$cluster.table <- cbind(cluster = wine$cluster.table$cluster,
+                            as.data.frame(wine$cluster.table$x))
+wine$cluster.table$sum <- wine$cluster.table$bad+wine$cluster.table$good
+```
+
+```{r}
+ggplot(data=wine$cluster.data, aes(x=cluster, y=quality,fill = quality)) + geom_bar(stat="identity")
+```
+
+```{r}
+wine$pie.label.sum <-  paste(as.vector(wine$cluster.table$cluster)
+                             , "(", round(wine$cluster.table$sum/sum(wine$cluster.table$sum) * 100, 2),
+                             "%)", sep = "")  
+ggplot(data = wine$cluster.table, aes(x="", y = sum, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "", title = "The Distribution of Clusters") +
+  theme(axis.ticks = element_blank()) +
+  scale_fill_discrete(breaks = wine$cluster.table$cluster,
+                      labels = wine$pie.label.sum) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.good <-  paste(as.vector(wine$cluster.table$cluster)
+                              , "(", round(wine$cluster.table$good/sum(wine$cluster.table$good) * 100, 2),
+                              "%)", sep = "")  
+ggplot(data = wine$cluster.table, aes(x="", y = good, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The Good Quality Wine") +
+  scale_fill_discrete(breaks = wine$cluster.table$cluster,
+                      labels = wine$pie.label.good) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.bad <-  paste(as.vector(wine$cluster.table$cluster)
+                             , "(", round(wine$cluster.table$bad/sum(wine$cluster.table$bad) * 100, 2),
+                             "%)", sep = "")  
+ggplot(data = wine$cluster.table, aes(x="", y = bad, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The Bad Quality Wine") +
+  scale_fill_discrete(breaks = wine$cluster.table$cluster,
+                      labels = wine$pie.label.bad) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+#EM model
+```{r}
+set.seed(1234)
+wine$EMS <- sample(1:nrow(wine$kmeans.task$env$data), size = 1000)
+wine$EM <- Mclust(wine$kmeans.task$env$data, G = 4,initialization = list(subset = wine$EMS))
+wine$EM.cluster<- cbind.data.frame(wine$kmeans.task$env$data, quality = wine$data$quality, cluster = as.factor(wine$EM$classification))
+```
+
+```{r}
+ggplot(data = wine$EM.cluster)+geom_point(mapping = aes(x = alcohol, y = residual.sugar, colour = cluster))
+```
+
+```{r}
+wine$cluster.table_EM <- aggregate.data.frame(x = wine$EM.cluster$quality,
+                                              by = list(cluster = wine$EM.cluster$cluster), FUN = table)
+colnames(wine$cluster.table_EM$x) <- c("bad", "good")
+wine$cluster.table_EM <- cbind(cluster = wine$cluster.table_EM$cluster,
+                               as.data.frame(wine$cluster.table_EM$x))
+wine$cluster.table_EM$sum <- wine$cluster.table_EM$bad+wine$cluster.table_EM$good
+```
+
+```{r}
+ggplot(data=wine$EM.cluster, aes(x=cluster, y=quality,fill = quality)) + geom_bar(stat="identity")
+```
+
+```{r}
+wine$pie.label.sum_EM <-  paste(as.vector(wine$cluster.table_EM$cluster)
+                                , "(", round(wine$cluster.table_EM$sum/sum(wine$cluster.table_EM$sum) * 100, 2),
+                                "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM, aes(x="", y = sum, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "", title = "The Distribution of Clusters") +
+  theme(axis.ticks = element_blank()) +
+  scale_fill_discrete(breaks = wine$cluster.table_EM$cluster,
+                      labels = wine$pie.label.sum_EM) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.good_EM <-  paste(as.vector(wine$cluster.table_EM$cluster)
+                                 , "(", round(wine$cluster.table$good/sum(wine$cluster.table_EM$good) * 100, 2),
+                                 "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM, aes(x="", y = good, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The Good Quality Wine") +
+  scale_fill_discrete(breaks = wine$cluster.table_EM$cluster,
+                      labels = wine$pie.label.good_EM) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.bad_EM <-  paste(as.vector(wine$cluster.table_EM$cluster)
+                                , "(", round(wine$cluster.table_EM$bad/sum(wine$cluster.table_EM$bad) * 100, 2),
+                                "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM, aes(x="", y = bad, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The Bad Quality Wine") +
+  scale_fill_discrete(breaks = wine$cluster.table_EM$cluster,
+                      labels = wine$pie.label.bad_EM) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+
+# Task 2
+
+```{r}
+wine$task2 <- makeClassifTask(data = wine$data, target = "quality")
+wine$task2 <- createDummyFeatures(wine$task2, method = 'reference')
+wine$fv <- generateFilterValuesData(wine$task2, method = "information.gain")
+```
+
+# Feature selection
+```{r}
+plotFilterValues(wine$fv)
+```
+We will keep the features with information gain greater than 0.02 most important features
+
+
+# PCA
+```{r}
+set.seed(1234)
+wine$pca <- prcomp(wine$cluster.data[,1:11])
+```
+
+
+```{r}
+wine$pca$percent <- cumsum(wine$pca$sdev/sum(wine$pca$sdev))
+ggplot(mapping = aes(x = 1:11,
+                     y = wine$pca$percent[1:11])) + geom_line() + geom_point()
+```
+Keep first 3 principal componments
+
+# ICA
+```{r}
+set.seed(1234)
+wine$ica <- fastICA(wine$cluster.data[,1:11], n.comp = 8)
+```
+
+```{r}
+pairs(wine$ica$S, col = rainbow(3)[wine$cluster.data[,12]])
+```
+keep the var5 and var3, since these componments could seperate the data well
+
+
+
+# RP
+```{r}
+set.seed(1234)
+wine$trans <- form_sparse_matrix(11,11,FALSE) 
+wine$rpdata <- as.matrix(wine$cluster.data[,1:11])%*%wine$trans
+```
+
+```{r}
+pairs(wine$rpdata, col = rainbow(3)[wine$cluster.data[,12]])
+```
+Keep the var4 and var5, since these componments could seperate the data well
+
+# Task 3
+
+## wine data after feature selection
+### Kmeans model
+```{r}
+wine$filtered.task <- filterFeatures(task = wine$task2, method = "information.gain", threshold = 0.02)
+wine$cluster.task.filtered <- makeClusterTask(data = wine$filtered.task$env$data[,-7])
+```
+
+```{r}
+wine$wssplot.filtered <- wssplot(wine$cluster.task.filtered$env$data)
+print(wine$wssplot.filtered)
+```
+Choose 4 as number of clusters
+
+```{r}
+wine$kmeans.lrn.filtered <- makeLearner("cluster.kmeans")
+set.seed(1234)
+wine$kmeans.lrn.filtered <- setHyperPars(wine$kmeans.lrn.filtered, centers = 4)
+wine$kmeans.mod.filtered <- mlr::train(learner = wine$kmeans.lrn.filtered, task = wine$cluster.task.filtered)
+wine$kmeans.pred.filtered <- predict(wine$kmeans.mod.filtered, task = wine$cluster.task.filtered)
+```
+
+
+```{r}
+wine$cluster.data.filtered <- cbind.data.frame(wine$cluster.task.filtered$env$data, quality = wine$data$quality, cluster = as.factor(wine$kmeans.pred.filtered$data$response))
+```
+
+
+```{r}
+ggplot(data = wine$cluster.data.filtered)+geom_point(mapping = aes(x = alcohol, y = density, colour = cluster))
+```
+
+```{r}
+wine$cluster.table.filtered <- aggregate.data.frame(x = wine$cluster.data.filtered$quality,
+                                                    by = list(cluster = wine$cluster.data.filtered$cluster), FUN = table)
+colnames(wine$cluster.table.filtered$x) <- c("bad", "good")
+wine$cluster.table.filtered <- cbind(cluster = wine$cluster.table.filtered$cluster,
+                                     as.data.frame(wine$cluster.table.filtered$x))
+wine$cluster.table.filtered$sum <- wine$cluster.table.filtered$bad+wine$cluster.table.filtered$good
+```
+
+```{r}
+ggplot(data=wine$cluster.data.filtered, aes(x=cluster, y= quality,fill = quality)) + geom_bar(stat="identity")
+```
+
+```{r}
+wine$pie.label.sum.filtered <-  paste(as.vector(wine$cluster.table.filtered$cluster)
+                                      , "(", round(wine$cluster.table.filtered$sum/sum(wine$cluster.table.filtered$sum) * 100, 2),
+                                      "%)", sep = "")  
+ggplot(data = wine$cluster.table.filtered, aes(x="", y = sum, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "", title = "The Distribution of Clusters") +
+  theme(axis.ticks = element_blank()) +
+  scale_fill_discrete(breaks = wine$cluster.table.filtered$cluster,
+                      labels = wine$pie.label.sum.filtered) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.good.filtered <-  paste(as.vector(wine$cluster.table.filtered$cluster)
+                                       , "(", round(wine$cluster.table.filtered$good/sum(wine$cluster.table.filtered$good) * 100, 2),
+                                       "%)", sep = "")  
+ggplot(data = wine$cluster.table.filtered, aes(x="", y = good, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The good quality wine") +
+  scale_fill_discrete(breaks = wine$cluster.table.filtered$cluster,
+                      labels = wine$pie.label.good.filtered) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.no.filtered <-  paste(as.vector(wine$cluster.table.filtered$cluster)
+                                     , "(", round(wine$cluster.table.filtered$no/sum(wine$cluster.table.filtered$no) * 100, 2),
+                                     "%)", sep = "")  
+ggplot(data = wine$cluster.table.filtered, aes(x="", y = bad, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The bad quality wine") +
+  scale_fill_discrete(breaks = wine$cluster.table.filtered$cluster,
+                      labels = wine$pie.label.bad) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+### EM model
+```{r}
+set.seed(1234)
+wine$EMS.filtered <- sample(1:nrow(wine$cluster.task.filtered$env$data), size = 100)
+wine$EM.filtered <- Mclust(wine$cluster.task.filtered$env$data,initialization = list(subset = wine$EMS.filtered))
+wine$EM.cluster.filtered <- cbind.data.frame(wine$cluster.task.filtered$env$data, quality = wine$data$quality, cluster = as.factor(wine$EM.filtered$classification))
+```
+
+```{r}
+ggplot(data = wine$EM.cluster.filtered)+geom_point(mapping = aes(x = alcohol, y = density, colour = cluster))
+```
+
+```{r}
+wine$cluster.table_EM.filtered <- aggregate.data.frame(x = wine$EM.cluster.filtered$quality,
+                                                       by = list(cluster = wine$EM.cluster.filtered$cluster), FUN = table)
+colnames(wine$cluster.table_EM.filtered$x) <- c("bad", "good")
+wine$cluster.table_EM.filtered <- cbind(cluster = wine$cluster.table_EM.filtered$cluster,
+                                        as.data.frame(wine$cluster.table_EM.filtered$x))
+wine$cluster.table_EM.filtered$sum <- wine$cluster.table_EM.filtered$bad+wine$cluster.table_EM.filtered$good
+```
+
+```{r}
+ggplot(data=wine$EM.cluster.filtered, aes(x=cluster, y=quality,fill = quality)) + geom_bar(stat="identity")
+```
+
+```{r}
+wine$pie.label.sum_EM.filtered <-  paste(as.vector(wine$cluster.table_EM.filtered$cluster)
+                                         , "(", round(wine$cluster.table_EM.filtered$sum/sum(wine$cluster.table_EM.filtered$sum) * 100, 2),
+                                         "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM.filtered, aes(x="", y = sum, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "", title = "The Distribution of Clusters") +
+  theme(axis.ticks = element_blank()) +
+  scale_fill_discrete(breaks = wine$cluster.table_EM.filtered$cluster,
+                      labels = wine$pie.label.sum_EM.filtered) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.yes_EM <-  paste(as.vector(wine$cluster.table_EM$cluster)
+                                , "(", round(wine$cluster.table$yes/sum(wine$cluster.table_EM$yes) * 100, 2),
+                                "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM, aes(x="", y = good, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The good wine quality") +
+  scale_fill_discrete(breaks = wine$cluster.table_EM$cluster,
+                      labels = wine$pie.label.good_EM) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.no_EM <-  paste(as.vector(wine$cluster.table_EM$cluster)
+                               , "(", round(wine$cluster.table_EM$no/sum(wine$cluster.table_EM$no) * 100, 2),
+                               "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM, aes(x="", y = bad, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The bad wine quality") +
+  scale_fill_discrete(breaks = wine$cluster.table_EM$cluster,
+                      labels = wine$pie.label.bad_EM) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+
+## wine data after pca
+```{r}
+wine$cluster.task.pca <- makeClusterTask(data = as.data.frame(wine$pca$x[,1:3]))
+```
+
+```{r}
+wine$wssplot.pca <- wssplot(wine$cluster.task.pca$env$data)
+print(wine$wssplot.pca)
+```
+Choose 4 as number of clusters
+
+```{r}
+wine$kmeans.lrn.pca <- makeLearner("cluster.kmeans")
+set.seed(1234)
+wine$kmeans.lrn.pca <- setHyperPars(wine$kmeans.lrn.pca, centers = 4)
+wine$kmeans.mod.pca <- mlr::train(learner = wine$kmeans.lrn.pca, task = wine$cluster.task.pca)
+wine$kmeans.pred.pca <- predict(wine$kmeans.mod.pca, task = wine$cluster.task.pca)
+```
+
+```{r}
+wine$cluster.data.pca <- cbind.data.frame(wine$cluster.task.pca$env$data, quality = wine$data$quality, cluster = as.factor(wine$kmeans.pred.pca$data$response))
+```
+
+```{r}
+ggplot(data = wine$cluster.data.pca)+geom_point(mapping = aes(x = PC1, y = PC2, colour = cluster))
+```
+
+```{r}
+wine$cluster.table.pca <- aggregate.data.frame(x = wine$cluster.data.pca$quality,
+                                               by = list(cluster = wine$cluster.data.pca$cluster), FUN = table)
+colnames(wine$cluster.table.pca$x) <- c("bad", "good")
+wine$cluster.table.pca <- cbind(cluster = wine$cluster.table.pca$cluster,
+                                as.data.frame(wine$cluster.table.pca$x))
+wine$cluster.table.pca$sum <- wine$cluster.table.pca$bad+wine$cluster.table.pca$good
+```
+
+```{r}
+ggplot(data=wine$cluster.data.pca, aes(x=cluster, y=quality,fill = quality)) + geom_bar(stat="identity")
+```
+
+```{r}
+wine$pie.label.sum.pca <-  paste(as.vector(wine$cluster.table.pca$cluster)
+                                 , "(", round(wine$cluster.table.pca$sum/sum(wine$cluster.table.pca$sum) * 100, 2),
+                                 "%)", sep = "")  
+ggplot(data = wine$cluster.table.pca, aes(x="", y = sum, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "", title = "The Distribution of Clusters") +
+  theme(axis.ticks = element_blank()) +
+  scale_fill_discrete(breaks = wine$cluster.table.pca$cluster,
+                      labels = wine$pie.label.sum.pca) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.good.pca <-  paste(as.vector(wine$cluster.table.pca$cluster)
+                                  , "(", round(wine$cluster.table.pca$good/sum(wine$cluster.table.pca$good) * 100, 2),
+                                  "%)", sep = "")  
+ggplot(data = wine$cluster.table.pca, aes(x="", y = good, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The good wine quality") +
+  scale_fill_discrete(breaks = wine$cluster.table.pca$cluster,
+                      labels = wine$pie.label.good.pca) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.no.pca <-  paste(as.vector(wine$cluster.table.pca$cluster)
+                                , "(", round(wine$cluster.table.pca$bad/sum(wine$cluster.table.pca$bad) * 100, 2),
+                                "%)", sep = "")  
+ggplot(data = wine$cluster.table.pca, aes(x="", y = bad, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The bad wine quality") +
+  scale_fill_discrete(breaks = wine$cluster.table.pca$cluster,
+                      labels = wine$pie.label.bad) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+### EM Model
+```{r}
+set.seed(1234)
+wine$EMS.pca <- sample(1:nrow(wine$cluster.task.pca$env$data), size = 100)
+wine$EM.pca <- Mclust(wine$cluster.task.pca$env$data,initialization = list(subset = wine$EMS.pca))
+wine$EM.cluster.pca <- cbind.data.frame(wine$cluster.task.pca$env$data, quality = wine$data$quality, cluster = as.factor(wine$EM.pca$classification))
+```
+
+```{r}
+ggplot(data = wine$EM.cluster.pca)+geom_point(mapping = aes(x = PC1, y = PC2, colour = cluster))
+```
+
+```{r}
+wine$cluster.table_EM.pca <- aggregate.data.frame(x = wine$EM.cluster.pca$quality,
+                                                  by = list(cluster = wine$EM.cluster.pca$cluster), FUN = table)
+colnames(wine$cluster.table_EM.pca$x) <- c("bad", "good")
+wine$cluster.table_EM.pca <- cbind(cluster = wine$cluster.table_EM.pca$cluster,
+                                   as.data.frame(wine$cluster.table_EM.pca$x))
+wine$cluster.table_EM.pca$sum <- wine$cluster.table_EM.pca$bad+wine$cluster.table_EM.pca$good
+```
+
+```{r}
+ggplot(data=wine$EM.cluster.pca, aes(x=cluster, y=quality,fill = quality)) + geom_bar(stat="identity")
+```
+
+```{r}
+wine$pie.label.sum_EM.pca <-  paste(as.vector(wine$cluster.table_EM.pca$cluster)
+                                    , "(", round(wine$cluster.table_EM.pca$sum/sum(wine$cluster.table_EM.pca$sum) * 100, 2),
+                                    "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM.pca, aes(x="", y = sum, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "", title = "The Distribution of Clusters") +
+  theme(axis.ticks = element_blank()) +
+  scale_fill_discrete(breaks = wine$cluster.table_EM.pca$cluster,
+                      labels = wine$pie.label.sum_EM.pca) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.good_EM.pca <-  paste(as.vector(wine$cluster.table_EM.pca$cluster)
+                                     , "(", round(wine$cluster.table_EM.pca$good/sum(wine$cluster.table_EM.pca$good) * 100, 2),
+                                     "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM.pca, aes(x="", y = good, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The good quality wine") +
+  scale_fill_discrete(breaks = wine$cluster.table_EM.pca$cluster,
+                      labels = wine$pie.label.good_EM.pca) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.bad_EM.pca <-  paste(as.vector(wine$cluster.table_EM.pca$cluster)
+                                    , "(", round(wine$cluster.table_EM.pca$bad/sum(wine$cluster.table_EM.pca$bad) * 100, 2),
+                                    "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM.pca, aes(x="", y = bad, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The bad quality wine") +
+  scale_fill_discrete(breaks = wine$cluster.table_EM.pca$cluster,
+                      labels = wine$pie.label.bad_EM.pca) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+## wine data after ica
+```{r}
+
+wine$cluster.task.ica <- makeClusterTask(data = as.data.frame(wine$ica$S[,c(3,5)]))
+```
+
+```{r}
+wine$wssplot.ica <- wssplot(wine$cluster.task.ica$env$data)
+print(wine$wssplot.ica)
+```
+Choose 4 as number of clusters
+
+```{r}
+wine$kmeans.lrn.ica <- makeLearner("cluster.kmeans")
+set.seed(1234)
+wine$kmeans.lrn.ica <- setHyperPars(wine$kmeans.lrn.ica, centers = 4)
+wine$kmeans.mod.ica <- mlr::train(learner = wine$kmeans.lrn.ica, task = wine$cluster.task.ica)
+wine$kmeans.pred.ica <- predict(wine$kmeans.mod.ica, task = wine$cluster.task.ica)
+```
+
+```{r}
+wine$cluster.data.ica <- cbind.data.frame(wine$cluster.task.ica$env$data, quality = wine$data$quality, cluster = as.factor(wine$kmeans.pred.ica$data$response))
+```
+
+```{r}
+ggplot(data = wine$cluster.data.ica)+geom_point(mapping = aes(x = V1, y = V2, colour = cluster))
+```
+
+```{r}
+wine$cluster.table.ica <- aggregate.data.frame(x = wine$cluster.data.ica$quality,
+                                               by = list(cluster = wine$cluster.data.ica$cluster), FUN = table)
+colnames(wine$cluster.table.ica$x) <- c("bad", "good")
+wine$cluster.table.ica <- cbind(cluster = wine$cluster.table.ica$cluster,
+                                as.data.frame(wine$cluster.table.ica$x))
+wine$cluster.table.ica$sum <- wine$cluster.table.ica$bad+wine$cluster.table.ica$good
+```
+
+```{r}
+ggplot(data=wine$cluster.data.ica, aes(x=cluster, y=quality,fill = quality)) + geom_bar(stat="identity")
+```
+
+```{r}
+wine$pie.label.sum.ica <-  paste(as.vector(wine$cluster.table.ica$cluster)
+                                 , "(", round(wine$cluster.table.ica$sum/sum(wine$cluster.table.ica$sum) * 100, 2),
+                                 "%)", sep = "")  
+ggplot(data = wine$cluster.table.ica, aes(x="", y = sum, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "", title = "The Distribution of Clusters") +
+  theme(axis.ticks = element_blank()) +
+  scale_fill_discrete(breaks = wine$cluster.table.ica$cluster,
+                      labels = wine$pie.label.sum.ica) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.good.ica <-  paste(as.vector(wine$cluster.table.ica$cluster)
+                                  , "(", round(wine$cluster.table.ica$good/sum(wine$cluster.table.ica$good) * 100, 2),
+                                  "%)", sep = "")  
+ggplot(data = wine$cluster.table.ica, aes(x="", y = good, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The good quality wine") +
+  scale_fill_discrete(breaks = wine$cluster.table.ica$cluster,
+                      labels = wine$pie.label.good.ica) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.bad.ica <-  paste(as.vector(wine$cluster.table.ica$cluster)
+                                 , "(", round(wine$cluster.table.ica$bad/sum(wine$cluster.table.ica$bad) * 100, 2),
+                                 "%)", sep = "")  
+ggplot(data = wine$cluster.table.ica, aes(x="", y = bad, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The bad quality wine") +
+  scale_fill_discrete(breaks = wine$cluster.table.ica$cluster,
+                      labels = wine$pie.label.no) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+###EM model
+```{r}
+set.seed(1234)
+wine$EMS.ica <- sample(1:nrow(wine$cluster.task.ica$env$data), size = 100)
+wine$EM.ica <- Mclust(wine$cluster.task.ica$env$data,initialization = list(subset = wine$EMS.ica))
+wine$EM.cluster.ica <- cbind.data.frame(wine$cluster.task.ica$env$data, quality = wine$data$quality, cluster =
+                                          as.factor(wine$EM.ica$classification))
+```
+
+```{r}
+ggplot(data = wine$EM.cluster.ica)+geom_point(mapping = aes(x = V1, y = V2, colour = cluster))
+```
+
+
+```{r}
+wine$cluster.table_EM.ica <- aggregate.data.frame(x = wine$EM.cluster.ica$quality,
+                                                  by = list(cluster = wine$EM.cluster.ica$cluster), FUN = table)
+colnames(wine$cluster.table_EM.ica$x) <- c("bad", "good")
+wine$cluster.table_EM.ica <- cbind(cluster = wine$cluster.table_EM.ica$cluster,
+                                   as.data.frame(wine$cluster.table_EM.ica$x))
+wine$cluster.table_EM.ica$sum <- wine$cluster.table_EM.ica$bad+wine$cluster.table_EM.ica$good
+```
+
+```{r}
+ggplot(data=wine$EM.cluster.ica, aes(x=cluster, y=quality,fill = quality)) + geom_bar(stat="identity")
+```
+
+```{r}
+wine$pie.label.sum_EM.ica <-  paste(as.vector(wine$cluster.table_EM.ica$cluster)
+                                    , "(", round(wine$cluster.table_EM.ica$sum/sum(wine$cluster.table_EM.ica$sum) * 100, 2),
+                                    "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM.ica, aes(x="", y = sum, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "", title = "The Distribution of Clusters") +
+  theme(axis.ticks = element_blank()) +
+  scale_fill_discrete(breaks = wine$cluster.table_EM.ica$cluster,
+                      labels = wine$pie.label.sum_EM.ica) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.good_EM.ica <-  paste(as.vector(wine$cluster.table_EM.ica$cluster)
+                                     , "(", round(wine$cluster.table_EM.ica$good/sum(wine$cluster.table_EM.ica$good) * 100, 2),
+                                     "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM.ica, aes(x="", y = good, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The good quality wine") +
+  scale_fill_discrete(breaks = wine$cluster.table_EM.ica$cluster,
+                      labels = wine$pie.label.good_EM.ica) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.bad_EM.ica <-  paste(as.vector(wine$cluster.table_EM.ica$cluster)
+                                    , "(", round(wine$cluster.table_EM.ica$bad/sum(wine$cluster.table_EM.ica$bad) * 100, 2),
+                                    "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM.ica, aes(x="", y = bad, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The bad quality wine") +
+  scale_fill_discrete(breaks = wine$cluster.table_EM.ica$cluster,
+                      labels = wine$pie.label.bad_EM.ica) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+## wine data after rp
+```{r}
+wine$cluster.task.rp <- makeClusterTask(data = as.data.frame(wine$rpdata[,c(4,5)]))
+```
+
+```{r}
+wine$wssplot.rp <- wssplot(wine$cluster.task.rp$env$data)
+print(wine$wssplot.rp)
+```
+Choose 4 as number of clusters
+
+```{r}
+wine$kmeans.lrn.rp <- makeLearner("cluster.kmeans")
+set.seed(1234)
+wine$kmeans.lrn.rp <- setHyperPars(wine$kmeans.lrn.rp, centers = 4)
+wine$kmeans.mod.rp <- mlr::train(learner = wine$kmeans.lrn.rp, task = wine$cluster.task.rp)
+wine$kmeans.pred.rp <- predict(wine$kmeans.mod.rp, task = wine$cluster.task.rp)
+```
+
+```{r}
+wine$cluster.data.rp <- cbind.data.frame(wine$cluster.task.rp$env$data, quality = wine$data$quality, cluster = as.factor(wine$kmeans.pred.rp$data$response))
+```
+
+```{r}
+ggplot(data = wine$cluster.data.rp)+geom_point(mapping = aes(x = V1, y = V2, colour = cluster))
+```
+
+```{r}
+wine$cluster.table.rp <- aggregate.data.frame(x = wine$cluster.data.rp$quality,
+                                              by = list(cluster = wine$cluster.data.rp$cluster), FUN = table)
+colnames(wine$cluster.table.rp$x) <- c("bad", "good")
+wine$cluster.table.rp <- cbind(cluster = wine$cluster.table.rp$cluster,
+                               as.data.frame(wine$cluster.table.rp$x))
+wine$cluster.table.rp$sum <- wine$cluster.table.rp$bad+wine$cluster.table.rp$good
+```
+
+```{r}
+ggplot(data=wine$cluster.data.rp, aes(x=cluster, y=quality,fill = quality)) + geom_bar(stat="identity")
+```
+
+```{r}
+wine$pie.label.sum.rp <-  paste(as.vector(wine$cluster.table.rp$cluster)
+                                , "(", round(wine$cluster.table.rp$sum/sum(wine$cluster.table.rp$sum) * 100, 2),
+                                "%)", sep = "")  
+ggplot(data = wine$cluster.table.rp, aes(x="", y = sum, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "", title = "The Distribution of Clusters") +
+  theme(axis.ticks = element_blank()) +
+  scale_fill_discrete(breaks = wine$cluster.table.rp$cluster,
+                      labels = wine$pie.label.sum.rp) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.good.rp <-  paste(as.vector(wine$cluster.table.rp$cluster)
+                                 , "(", round(wine$cluster.table.rp$good/sum(wine$cluster.table.rp$good) * 100, 2),
+                                 "%)", sep = "")  
+ggplot(data = wine$cluster.table.rp, aes(x="", y = good, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The good quality wine") +
+  scale_fill_discrete(breaks = wine$cluster.table.rp$cluster,
+                      labels = wine$pie.label.good.rp) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.bad.rp <-  paste(as.vector(wine$cluster.table.rp$cluster)
+                                , "(", round(wine$cluster.table.rp$bad/sum(wine$cluster.table.rp$bad) * 100, 2),
+                                "%)", sep = "")  
+ggplot(data = wine$cluster.table.rp, aes(x="", y = bad, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The bad quality wine") +
+  scale_fill_discrete(breaks = wine$cluster.table.rp$cluster,
+                      labels = wine$pie.label.bad) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+### EM Model
+```{r}
+set.seed(1234)
+wine$EMS.rp <- sample(1:nrow(wine$cluster.task.rp$env$data), size = 100)
+wine$EM.rp <- Mclust(wine$cluster.task.rp$env$data,initialization = list(subset = wine$EMS.rp))
+wine$EM.cluster.rp <- cbind.data.frame(wine$cluster.task.rp$env$data, quality = wine$data$quality, cluster = as.factor(wine$EM.rp$classification))
+```
+
+```{r}
+ggplot(data = wine$EM.cluster.rp)+geom_point(mapping = aes(x = V1, y = V2, colour = cluster))
+```
+
+
+```{r}
+wine$cluster.table_EM.rp <- aggregate.data.frame(x = wine$EM.cluster.rp$quality,
+                                                 by = list(cluster = wine$EM.cluster.rp$cluster), FUN = table)
+colnames(wine$cluster.table_EM.rp$x) <- c("bad", "good")
+wine$cluster.table_EM.rp <- cbind(cluster = wine$cluster.table_EM.rp$cluster,
+                                  as.data.frame(wine$cluster.table_EM.rp$x))
+wine$cluster.table_EM.rp$sum <- wine$cluster.table_EM.rp$bad+wine$cluster.table_EM.rp$good
+```
+
+```{r}
+ggplot(data=wine$EM.cluster.rp, aes(x=cluster, y=quality,fill = quality)) + geom_bar(stat="identity")
+```
+
+```{r}
+wine$pie.label.sum_EM.rp <-  paste(as.vector(wine$cluster.table_EM.rp$cluster)
+                                   , "(", round(wine$cluster.table_EM.rp$sum/sum(wine$cluster.table_EM.rp$sum) * 100, 2),
+                                   "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM.rp, aes(x="", y = sum, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "", title = "The Distribution of Clusters") +
+  theme(axis.ticks = element_blank()) +
+  scale_fill_discrete(breaks = wine$cluster.table_EM.rp$cluster,
+                      labels = wine$pie.label.sum_EM.rp) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.good_EM.rp <-  paste(as.vector(wine$cluster.table_EM.rp$cluster)
+                                    , "(", round(wine$cluster.table_EM.rp$good/sum(wine$cluster.table_EM.rp$good) * 100, 2),
+                                    "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM.rp, aes(x="", y = good, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The Client Who Subscribe a Term Deposit") +
+  scale_fill_discrete(breaks = wine$cluster.table_EM.rp$cluster,
+                      labels = wine$pie.label.good_EM.rp) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+```{r}
+wine$pie.label.bad_EM.rp <-  paste(as.vector(wine$cluster.table_EM.rp$cluster)
+                                   , "(", round(wine$cluster.table_EM.rp$bad/sum(wine$cluster.table_EM.rp$bad) * 100, 2),
+                                   "%)", sep = "")  
+ggplot(data = wine$cluster.table_EM.rp, aes(x="", y = bad, fill = cluster)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(x = "", y = "") +
+  theme(axis.ticks = element_blank()) +
+  ggtitle("The Client Who Do Not Subscribe a Term Deposit") +
+  scale_fill_discrete(breaks = wine$cluster.table_EM.rp$cluster,
+                      labels = wine$pie.label.bad_EM.rp) +
+  theme(axis.text.x = element_blank()) +
+  theme(panel.grid = element_blank()) +
+  theme(panel.border = element_blank())
+```
+
+#task4
+##ANN after filtering 
+```{r}
+wine$getPerformance <-function(train.pred, test.pred, time, iname){
+  require(mlr)
+  train.error <- 1-performance(train.pred, measures = list(acc))
+  test.error <- 1- performance(test.pred, measures = list(acc))
+  train.tpr <- performance(train.pred, measures = list(tpr))
+  test.tpr <- performance(test.pred, measures = list(tpr))
+  train.ppv <- performance(train.pred, measures = list(ppv))
+  test.ppv <- performance(test.pred, measures = list(ppv))
+  newrow <- data.frame( 
+    train.error = train.error,
+    test.error = test.error,
+    train.tpr = train.tpr,
+    test.tpr = test.tpr,
+    train.ppv = train.ppv,
+    test.ppv = test.ppv,
+    train.time = time)
+  return(newrow)
+}
+```
+
+```{r}
+wine$filtered.data <- cbind(wine$cluster.task.filtered$env$data, quality = wine$data$quality)
+set.seed(6397)
+wine$Partition.filtered <- createDataPartition(wine$filtered.data$quality, p = 0.7, list = FALSE)
+wine$train.filtered = wine$filtered.data[wine$Partition.filtered, ]
+wine$test.filtered = wine$filtered.data[-wine$Partition.filtered, ]
+
+wine$train_task.filtered <- makeClassifTask(data = wine$train.filtered, target = "quality")
+wine$ann_lr.filtered <- makeLearner("classif.h2o.deeplearning",hidden = c(9,9,9),
+                                    activation = "Rectifier", seed = round(2017), reproducible = TRUE, epochs = 20)
+wine$model.filtered<- mlr::train(wine$ann_lr.filtered, wine$train_task.filtered)
+wine$train.pred.filtered <- predict(wine$model.filtered, wine$train_task.filtered)
+wine$test.pred.filtered <- predict(wine$model.filtered, newdata = wine$test.filtered)
+wine$perf.filtered <- wine$getPerformance(wine$train.pred.filtered, wine$test.pred.filtered, wine$model.filtered$time)
+````
+
+##ANN after PCA
+```{r}
+wine$pca.data <- cbind(as.data.frame(wine$pca$x[,1:3]), quality = wine$data$quality)
+set.seed(6397)
+wine$Partition.pca <- createDataPartition(wine$pca.data$quality, p = 0.7, list = FALSE)
+wine$train.pca = wine$pca.data[wine$Partition.pca, ]
+wine$test.pca = wine$pca.data[-wine$Partition.pca, ]
+
+wine$train_task.pca <- makeClassifTask(data = wine$train.pca, target = "quality")
+wine$ann_lr.pca <- makeLearner("classif.h2o.deeplearning",hidden = c(9,9,9),
+                               activation = "Rectifier", seed = round(2017), reproducible = TRUE, epochs = 20)
+wine$model.pca<- mlr::train(wine$ann_lr.pca, wine$train_task.pca)
+wine$train.pred.pca <- predict(wine$model.pca, wine$train_task.pca)
+wine$test.pred.pca <- predict(wine$model.pca, newdata = wine$test.pca)
+wine$perf.pca <- wine$getPerformance(wine$train.pred.pca, wine$test.pred.pca, wine$model.pca$time)
+```
+
+##ANN after ICA
+```{r}
+wine$ica.data <- cbind(as.data.frame(wine$ica$S[,c(3,5)]), quality = wine$data$quality)
+set.seed(6397)
+wine$Partition.ica <- createDataPartition(wine$ica.data$quality, p = 0.7, list = FALSE)
+wine$train.ica = wine$ica.data[wine$Partition.ica, ]
+wine$test.ica = wine$ica.data[-wine$Partition.ica, ]
+
+wine$train_task.ica <- makeClassifTask(data = wine$train.ica, target = "quality")
+wine$ann_lr.ica <- makeLearner("classif.h2o.deeplearning",hidden = c(9,9,9),
+                               activation = "Rectifier", seed = round(2017), reproducible = TRUE, epochs = 20)
+wine$model.ica<- mlr::train(wine$ann_lr.ica, wine$train_task.ica)
+wine$train.pred.ica <- predict(wine$model.ica, wine$train_task.ica)
+wine$test.pred.ica <- predict(wine$model.ica, newdata = wine$test.ica)
+wine$perf.ica <- wine$getPerformance(wine$train.pred.ica, wine$test.pred.ica, wine$model.ica$time)
+```
+
+##ANN after rp
+```{r}
+wine$rp.data <- cbind(as.data.frame(wine$rpdata[,c(4,5)]), quality = wine$data$quality)
+set.seed(6397)
+wine$Partition.rp <- createDataPartition(wine$rp.data$quality, p = 0.7, list = FALSE)
+wine$train.rp = wine$rp.data[wine$Partition.rp, ]
+wine$test.rp = wine$rp.data[-wine$Partition.rp, ]
+
+wine$train_task.rp <- makeClassifTask(data = wine$train.rp, target = "quality")
+wine$ann_lr.rp <- makeLearner("classif.h2o.deeplearning",hidden = c(9,9,9),
+                              activation = "Rectifier", seed = round(2017), reproducible = TRUE, epochs = 20)
+wine$model.rp<- mlr::train(wine$ann_lr.rp, wine$train_task.rp)
+wine$train.pred.rp <- predict(wine$model.rp, wine$train_task.rp)
+wine$test.pred.rp <- predict(wine$model.rp, newdata = wine$test.rp)
+wine$perf.rp <- wine$getPerformance(wine$train.pred.rp, wine$test.pred.rp, wine$model.rp$time)
+```
+
+##ANN before apply algorithms
+```{r}
+set.seed(6397)
+wine$Partition.p3 <- createDataPartition(wine$data$quality, p = 0.7, list = FALSE)
+wine$train.p3 = wine$data[wine$Partition.p3, ]
+wine$test.p3 = wine$data[-wine$Partition.p3, ]
+
+wine$train_task.p3 <- makeClassifTask(data = wine$train.p3, target = "quality")
+wine$ann_lr.p3 <- makeLearner("classif.h2o.deeplearning",hidden = c(9,9,9),
+                              activation = "Rectifier", seed = round(2017), reproducible = TRUE, epochs = 20)
+wine$model.p3<- mlr::train(wine$ann_lr.p3, wine$train_task.p3)
+wine$train.pred.p3 <- predict(wine$model.p3, wine$train_task.p3)
+wine$test.pred.p3 <- predict(wine$model.p3, newdata = wine$test.p3)
+wine$perf.p3 <- wine$getPerformance(wine$train.pred.p3, wine$test.pred.p3, wine$model.p3$time)
+```
+
+
+##Comparsion
+```{r}
+wine$perf.t4 <- rbind(wine$perf.p3, wine$perf.filtered, wine$perf.pca, wine$perf.ica, wine$perf.rp)
+rownames(wine$perf.t4) <- NULL
+wine$perf.t4$method <- c("original", "filter", "pca", "ica", "rp")
+```
+
+```{r}
+wine$test.error.d2t4 <- ggplot(data = wine$perf.t4)+geom_bar(mapping = aes(x = method, y = test.error), stat="identity")
+wine$test.tpr.d2t4 <- ggplot(data = wine$perf.t4)+geom_bar(mapping = aes(x = method, y = test.tpr), stat="identity")
+wine$test.ppv.d2t4 <- ggplot(data = wine$perf.t4)+geom_bar(mapping = aes(x = method, y = test.ppv), stat="identity")
+wine$train.time.d2t4 <- ggplot(data = wine$perf.t4)+geom_bar(mapping = aes(x = method, y = train.time), stat="identity")
+```
+
+
+#task 5
+```{r}
+wine$ann.data.EM <- createDummyFeatures(wine$EM.cluster$cluster, method = 'reference')
+wine$ann.data.EM <- cbind(wine$ann.data.EM, quality = wine$data$quality)
+colnames(wine$ann.data.EM)[1:3] <- c("cluster2","cluster3","cluster4")
+
+wine$ann.data <- createDummyFeatures(wine$cluster.data$cluster, method = 'reference')
+wine$ann.data <- cbind(wine$ann.data, quality = wine$data$quality)
+colnames(wine$ann.data)[1:3] <- c("cluster2","cluster3","cluster4")
+```
+
+```{r}
+set.seed(6397)
+wine$Partition <- createDataPartition(wine$ann.data$quality, p = 0.7, list = FALSE)
+wine$ann_train = wine$ann.data[wine$Partition, ]
+wine$ann_test = wine$ann.data[-wine$Partition, ]
+
+set.seed(6397)
+wine$Partition.EM <- createDataPartition(wine$ann.data.EM$quality, p = 0.7, list = FALSE)
+wine$ann_train.EM = wine$ann.data.EM[wine$Partition.EM, ]
+wine$ann_test.EM = wine$ann.data.EM[-wine$Partition.EM, ]
+```
+
+
+```{r}
+wine$train_task <- makeClassifTask(data = wine$ann_train, target = "quality")
+wine$ann_lr <- makeLearner("classif.h2o.deeplearning",hidden = c(9,9,9),
+                           activation = "Rectifier", seed = round(2017), reproducible = TRUE, epochs = 20)
+wine$model<- mlr::train(wine$ann_lr,wine$train_task)
+wine$train.pred <- predict(wine$model, wine$train_task)
+wine$test.pred <- predict(wine$model, newdata = wine$ann_test)
+wine$perf <- wine$getPerformance(wine$train.pred,wine$test.pred, wine$model$time)
+```
+
+```{r}
+wine$train_task.EM <- makeClassifTask(data = wine$ann_train.EM, target = "quality")
+wine$ann_lr.EM <- makeLearner("classif.h2o.deeplearning",hidden = c(9,9,9),
+                              activation = "Rectifier", seed = round(2017), reproducible = TRUE, epochs = 20)
+wine$model.EM <- mlr::train(wine$ann_lr.EM,wine$train_task.EM)
+wine$train.pred.EM <- predict(wine$model.EM, wine$train_task.EM)
+wine$test.pred.EM <- predict(wine$model.EM, newdata = wine$ann_test.EM)
+wine$perf.EM <- wine$getPerformance(wine$train.pred.EM,wine$test.pred.EM, wine$model.EM$time)
+```
+
+#Comparsion
+```{r}
+wine$perf.t5 <- rbind(wine$perf.p3, wine$perf, wine$perf.EM)
+rownames(wine$perf.t5) <- NULL
+wine$perf.t5$method <- c("original", "Kmenas", "EM")
+```
+
+```{r}
+wine$test.error.d2t5 <- ggplot(data = wine$perf.t5)+geom_bar(mapping = aes(x = method, y = test.error), stat="identity")
+wine$test.tpr.d2t5 <- ggplot(data = wine$perf.t5)+geom_bar(mapping = aes(x = method, y = test.tpr), stat="identity")
+wine$test.ppv.d2t5 <- ggplot(data = wine$perf.t5)+geom_bar(mapping = aes(x = method, y = test.ppv), stat="identity")
+wine$train.time.d2t5 <- ggplot(data = wine$perf.t5)+geom_bar(mapping = aes(x = method, y = train.time), stat="identity")
+```
+
+

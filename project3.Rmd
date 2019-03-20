@@ -1,0 +1,669 @@
+---
+title: "project3"
+author: "Yao Shi"
+date: "November 5, 2017"
+output: pdf_document
+---
+
+#import data 
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+library(h2o)
+library(caret)
+library(mlr)
+library(parallel)
+library(scatterplot3d)
+library(gridExtra)
+wine <- read.csv("C:/Users/Yao/Desktop/course for 17fall/6341 machine learning/project/project2/winequality-white.csv",sep = ";")
+wine_dummy <- ifelse(wine[,12]>5,1,0)
+wine_dummy <- as.data.frame(wine_dummy)
+wine <- cbind(wine[1:11],wine_dummy)
+names(wine)[12]="quality"
+wine$quality <- as.factor(wine$quality)
+```
+
+```{r}
+wine$quality <- factor(wine$quality, c(1, 0))
+```
+
+
+#split the data
+```{r}
+set.seed(154)
+Partition <- createDataPartition(wine$quality, p = 0.7, list = FALSE)
+wine_train = wine[Partition, ]
+wine_test = wine[-Partition, ]
+```
+
+#performance function
+```{r}
+getPerformance <-function(train.pred, test.pred, time, iname, i){
+  require(mlr)
+  train.error <- 1-performance(train.pred, measures = list(acc))
+  test.error <- 1- performance(test.pred, measures = list(acc))
+  train.tpr <- performance(train.pred, measures = list(tpr))
+  test.tpr <- performance(test.pred, measures = list(tpr))
+  train.ppv <- performance(train.pred, measures = list(ppv))
+  test.ppv <- performance(test.pred, measures = list(ppv))
+  newrow <- data.frame( a = i[1],
+                        b = i[2],
+                        c = i[3],
+                     train.error = train.error,
+                     test.error = test.error,
+                     train.tpr = train.tpr,
+                     test.tpr = test.tpr,
+                     train.ppv = train.ppv,
+                     test.ppv = test.ppv,
+                     train.time = time)
+  colnames(newrow)[1:3] <- iname
+  return(newrow)
+}
+```
+
+
+#experiments with different layers, node and activation function.
+```{r}
+learners <- listLearners()
+getParamSet("classif.h2o.deeplearning")
+train_task <- makeClassifTask(data = wine_train, target = "quality")
+getNode <- function(nr, lr){
+  node <- list()
+  for (i in 1:length(nr)) {
+    node[[i]] <- list()
+    for (e in 1:length(lr)) {
+      node[[i]][[e]] <- rep(nr[i],lr[e])
+    }
+    names(node[[i]]) <- lr
+  }
+  names(node) <- nr
+  return(node)
+}
+node <- getNode(seq(5,10), seq(1:5))
+act <- c("Tanh","Rectifier","TanhWithDropout")
+```
+
+```{r}
+ann_1 <- function(i, node, act, train_task, wine_test, getPerformance){
+  require(mlr)
+  newrow <- list()
+  for (e in 1:5) {
+    newrow[[e]] <- list()
+    for (q in 1:length(act)) {
+      ann_lr <- makeLearner("classif.h2o.deeplearning",hidden = node[[i]][[e]],
+                            activation = act[q], seed = 2017, reproducible = TRUE, epochs = 20)
+      model<- mlr::train(ann_lr,train_task)
+      test.pred <- predict(model, newdata = wine_test)
+      train.pred <- predict(model, train_task)
+      newrow[[e]][[q]] <- getPerformance(train.pred, test.pred, model$time, 
+                                    iname = c('node','layer','act'), 
+                                    i = c(names(node)[i], names(node[[i]])[e], act[q]))
+      rm(test.pred, train.pred, model)
+    }
+  }
+  return(newrow)
+}
+```
+
+#get result and plot
+```{r}
+t1 <- proc.time()
+result <- lapply(1:6, ann_1, node, act, train_task,wine_test, getPerformance)
+t2 <- proc.time()
+t2 -t1
+```
+
+```{r}
+plot.frame <- data.frame()
+for (m in 1:length(result)){
+  for (n in 1:length(result[[m]])){
+    for (r in 1:length(result[[m]][[n]])) {
+      plot.frame <- rbind(plot.frame,result[[m]][[n]][[r]])
+    }
+       
+  }
+}
+plot.frame$act <- as.factor(plot.frame$act)
+```
+
+```{r}
+plot.frame$node <- as.numeric(as.character(plot.frame$node))
+```
+
+```{r}
+colors <- c("#999999", '#E69F00', '#56B4E9')
+colors <- colors[as.numeric(plot.frame$act)]
+ppp <- scatterplot3d(x = plot.frame$node, y = plot.frame$layer, z = plot.frame$test.error, color = colors, pch = 16, type = 'h')
+legend('bottom', legend = levels(plot.frame$act), col = c("#999999", '#E69F00', '#56B4E9'), pch = 16, inset = -0.33, xpd = TRUE, horiz = TRUE)
+ppp_2 <- scatterplot3d(x = plot.frame$node, y = plot.frame$layer, z = plot.frame$test.tpr, color = colors, pch = 16, type = 'h')
+legend('bottom', legend = levels(plot.frame$act), col = c("#999999", '#E69F00', '#56B4E9'), pch = 16, inset = -0.33, xpd = TRUE, horiz = TRUE)
+ppp_3 <- scatterplot3d(x = plot.frame$node, y = plot.frame$layer, z = plot.frame$test.ppv, color = colors, pch = 16, type = 'h')
+legend('bottom', legend = levels(plot.frame$act), col = c("#999999", '#E69F00', '#56B4E9'), pch = 16, inset = -0.33, xpd = TRUE, horiz = TRUE)
+plot.frame[which(plot.frame$test.error==min(plot.frame$test.error)),]
+
+ppp
+ppp_2
+ppp_3
+
+
+```
+#build ann model using different size of data
+```{r}
+getPerformance_1 <-function(train.pred, test.pred, size, time){
+  require(mlr)
+  train.error <- 1-performance(train.pred, measures = list(acc))
+  test.error <- 1- performance(test.pred, measures = list(acc))
+  train.tpr <- performance(train.pred, measures = list(tpr))
+  test.tpr <- performance(test.pred, measures = list(tpr))
+  train.ppv <- performance(train.pred, measures = list(ppv))
+  test.ppv <- performance(test.pred, measures = list(ppv))
+  newrow <- data.frame(train.size = size,
+                     train.error = train.error,
+                     test.error = test.error,
+                     train.tpr = train.tpr,
+                     test.tpr = test.tpr,
+                     train.ppv = train.ppv,
+                     test.ppv = test.ppv,
+                     train.time = time)
+  return(newrow)
+}
+ann_2 <- function(p, wine, getPerformance_1){
+  require(mlr)
+  set.seed(154)
+  Partition <- createDataPartition(wine$quality, p = p, list = FALSE)
+  wine_train <- wine[Partition, ]
+  wine_test <- wine[-Partition, ]
+  train_task <- makeClassifTask(data = wine_train, target = "quality")
+  newrow <- list()
+  ann_lr <- makeLearner("classif.h2o.deeplearning",hidden = c(9,9,9),
+                        activation = "Rectifier", seed = round(2017*p), reproducible = TRUE, epochs = 20)
+  model<- mlr::train(ann_lr,train_task)
+  test.pred <- predict(model, newdata = wine_test)
+  train.pred <- predict(model, train_task)
+  newrow <- getPerformance_1(train.pred, test.pred, p,  model$time)
+  rm(test.pred, train.pred, model)
+  rownames(newrow) <- NULL
+  return(newrow)
+}
+```
+
+```{r}
+outcome_size_l <- lapply(seq(0.3, 0.9, 0.1), ann_2, wine, getPerformance_1)
+outcome_size_l
+
+```
+
+```{r}
+outcome_size <- data.frame()
+for (i in 1:length(outcome_size_l)) {
+  outcome_size <- rbind(outcome_size, outcome_size_l[[i]])
+}
+```
+
+```{r}
+size_ann_1 <- ggplot(data = outcome_size) + geom_point( mapping = aes(x = train.size, y = train.error,colour = 'train')) + geom_line( mapping = aes(x =train.size, y = train.error,colour = 'train')) + geom_point( mapping = aes(x = train.size, y = test.error,colour = 'test')) + geom_line( mapping = aes(x = train.size, y = test.error,colour = 'test'))
+
+
+size_ann_2 <- ggplot(data = outcome_size) + geom_point( mapping = aes(x = train.size, y = train.tpr,colour = 'train')) + geom_line( mapping = aes(x =train.size, y = train.tpr,colour = 'train')) + geom_point( mapping = aes(x = train.size, y = test.tpr,colour = 'test')) + geom_line( mapping = aes(x = train.size, y = test.tpr,colour = 'test'))
+
+size_ann_3 <- ggplot(data = outcome_size) + geom_point( mapping = aes(x = train.size, y = train.ppv,colour = 'train')) + geom_line( mapping = aes(x =train.size, y = train.ppv,colour = 'train')) + geom_point( mapping = aes(x = train.size, y = test.ppv,colour = 'test')) + geom_line( mapping = aes(x = train.size, y = test.ppv,colour = 'test'))
+
+size_plot<- grid.arrange(size_ann_1,size_ann_2,size_ann_3)
+size_plot
+```
+
+#build ann with different number of features
+```{r}
+getPerformance_f <- function(train.pred, test.pred, i){
+  require(mlr)
+  train.error <- 1-performance(train.pred, measures = list(acc))
+  test.error <- 1- performance(test.pred, measures = list(acc))
+  train.tpr <- performance(train.pred, measures = list(tpr))
+  test.tpr <- performance(test.pred, measures = list(tpr))
+  train.ppv <- performance(train.pred, measures = list(ppv))
+  test.ppv <- performance(test.pred, measures = list(ppv))
+  newrow <- data.frame(nfeature = i,
+                     train.error = train.error,
+                     test.error = test.error,
+                     train.tpr = train.tpr,
+                     test.tpr = test.tpr,
+                     train.ppv = train.ppv,
+                     test.ppv = test.ppv)
+  return(newrow)
+}
+
+nfeature <- seq(2,11,1) 
+
+ann_f <- function(i,getPerformance_f){
+  require(mlr)
+  set.seed(154)
+  train_task <- makeClassifTask(data = wine_train[c(1:i,12)], target = "quality")
+  ann_lr <- makeLearner("classif.h2o.deeplearning",hidden = c(9,9,9),
+                        activation = "Rectifier", seed = round(2017), reproducible = TRUE, epochs = 20)
+  model<- mlr::train(ann_lr,train_task)
+  test.pred <- predict(model, newdata = wine_test[c(1:i,12)])
+  train.pred <- predict(model, train_task)
+  newrow <- getPerformance_f(train.pred, test.pred, i)
+  rm(test.pred, train.pred, model)
+  rownames(newrow) <- NULL
+  return(newrow)
+}
+
+output_f <- lapply(nfeature,ann_f,getPerformance_f)
+outcome_f <- data.frame()
+for (i in 1:length(output_f)) {
+  outcome_f <- rbind(outcome_f, output_f[[i]])
+}
+
+feature_ann_1 <- ggplot(data = outcome_f) + geom_point( mapping = aes(x = nfeature, y = train.error,colour = 'train')) + geom_line( mapping = aes(x =nfeature, y = train.error,colour = 'train')) + geom_point( mapping = aes(x = nfeature, y = test.error,colour = 'test')) + geom_line( mapping = aes(x = nfeature, y = test.error,colour = 'test'))
+
+feature_ann_2 <- ggplot(data = outcome_f) + geom_point( mapping = aes(x = nfeature, y = train.tpr,colour = 'train')) + geom_line( mapping = aes(x =nfeature, y = train.tpr,colour = 'train')) + geom_point( mapping = aes(x = nfeature, y = test.tpr,colour = 'test')) + geom_line( mapping = aes(x = nfeature, y = test.tpr,colour = 'test'))
+
+feature_ann_3 <- ggplot(data = outcome_f) + geom_point( mapping = aes(x = nfeature, y = train.ppv,colour = 'train')) + geom_line( mapping = aes(x =nfeature, y = train.ppv,colour = 'train')) + geom_point( mapping = aes(x = nfeature, y = test.ppv,colour = 'test')) + geom_line( mapping = aes(x = nfeature, y = test.ppv,colour = 'test'))
+
+feature_plot<- grid.arrange(feature_ann_1,feature_ann_2,feature_ann_3)
+
+```
+
+#Knn with different K
+```{r}
+set.seed(154)
+new.wine <- normalizeFeatures(wine, target = 'quality')
+new.wine.train <- new.wine[Partition,]
+new.wine.test <- new.wine[-Partition,]
+```
+
+```{r}
+nk <- seq(2,10,1)
+
+getPerformance_k <-function(train.pred, test.pred, k, time){
+  require(mlr)
+  train.error <- 1-performance(train.pred, measures = list(acc))
+  test.error <- 1- performance(test.pred, measures = list(acc))
+  train.tpr <- performance(train.pred, measures = list(tpr))
+  test.tpr <- performance(test.pred, measures = list(tpr))
+  train.ppv <- performance(train.pred, measures = list(ppv))
+  test.ppv <- performance(test.pred, measures = list(ppv))
+  newrow <- data.frame( K = k,
+                     train.error = train.error,
+                     test.error = test.error,
+                     train.tpr = train.tpr,
+                     test.tpr = test.tpr,
+                     train.ppv = train.ppv,
+                     test.ppv = test.ppv,
+                     train.time = time)
+}
+
+kn <- list()
+getParamSet("classif.knn")
+train_task_knn <- makeClassifTask(data = new.wine.train, target = "quality")
+
+for (q in 1:length(nk)){
+  set.seed(154)
+  knn_k <- makeLearner("classif.knn",k = nk[q])
+  model<- mlr::train(knn_k,train_task_knn)
+  test.pred <- predict(model, newdata = new.wine.test)
+  train.pred <- predict(model, train_task_knn)
+  kn[[q]] <- getPerformance_k(train.pred, test.pred, nk[q], model$time)
+  rm(test.pred, train.pred, model)
+}
+
+output_k <- rbind(kn[[1]],kn[[2]],kn[[3]],kn[[4]],kn[[5]],kn[[6]],kn[[7]],kn[[8]],kn[[9]])
+
+K_plot_1 <- ggplot(data = output_k) + geom_point( mapping = aes(x = K, y = train.error,colour = 'train')) + geom_line( mapping = aes(x = K, y = train.error,colour = 'train')) + geom_point( mapping = aes(x = K, y = test.error,colour = 'test')) + geom_line( mapping = aes(x = K, y = test.error,colour = 'test'))
+
+K_plot_2 <- ggplot(data = output_k) + geom_point( mapping = aes(x = K, y = train.tpr,colour = 'train')) + geom_line( mapping = aes(x =K, y = train.tpr,colour = 'train')) + geom_point( mapping = aes(x = K, y = test.tpr,colour = 'test')) + geom_line( mapping = aes(x = K, y = test.tpr,colour = 'test'))
+
+K_plot_3 <- ggplot(data = output_k) + geom_point( mapping = aes(x = K, y = train.ppv,colour = 'train')) + geom_line( mapping = aes(x =K, y = train.ppv,colour = 'train')) + geom_point( mapping = aes(x = K, y = test.ppv,colour = 'test')) + geom_line( mapping = aes(x = K, y = test.ppv,colour = 'test'))
+
+nk_plot <- grid.arrange(K_plot_1,K_plot_2,K_plot_3)
+```
+
+```{r}
+getPerformance_k_1 <-function(train.pred, test.pred, size, k, time){
+  require(mlr)
+  train.error <- 1-performance(train.pred, measures = list(acc))
+  test.error <- 1- performance(test.pred, measures = list(acc))
+  train.tpr <- performance(train.pred, measures = list(tpr))
+  test.tpr <- performance(test.pred, measures = list(tpr))
+  train.ppv <- performance(train.pred, measures = list(ppv))
+  test.ppv <- performance(test.pred, measures = list(ppv))
+  newrow <- data.frame(train.size = size,
+                      k = k,
+                      train.error = train.error,
+                      test.error = test.error,
+                      train.tpr = train.tpr,
+                      test.tpr = test.tpr,
+                      train.ppv = train.ppv,
+                      test.ppv = test.ppv,
+                      train.time = time)
+}
+```
+
+
+#different train size for knn
+```{r}
+knn_size <- function(p, wine, getPerformance_k_1){
+  require(mlr)
+  set.seed(154)
+  Partition <- createDataPartition(wine$quality, p = p, list = FALSE)
+  wine_train <- wine[Partition, ]
+  wine_test <- wine[-Partition, ]
+  train_task <- makeClassifTask(data = wine_train, target = "quality")
+  newrow <- list()
+  knn_k <- makeLearner("classif.knn",k = 3)
+  model<- mlr::train(knn_k,train_task)
+  test.pred <- predict(model, newdata = wine_test)
+  train.pred <- predict(model, train_task)
+  newrow <- getPerformance_k_1(train.pred, test.pred, p, 3, model$time)
+  rm(test.pred, train.pred, model)
+  return(newrow)
+}
+
+outcome_knn_size_l <- lapply(seq(0.3,0.9,0.1), knn_size, wine, getPerformance_k_1)
+```
+
+```{r}
+outcome_knn <- data.frame()
+for (i in 1:length(outcome_knn_size_l)) {
+  outcome_knn <- rbind(outcome_knn, outcome_knn_size_l[[i]])
+}
+outcome_knn[which(outcome_knn$test.error==min(outcome_knn$test.error)),]
+
+size_knn_1<- ggplot(data = outcome_knn) + geom_point( mapping = aes(x = train.size, y = train.error,colour = 'train')) + geom_line( mapping = aes(x =train.size, y = train.error,colour = 'train')) + geom_point( mapping = aes(x = train.size, y = test.error,colour = 'test')) + geom_line( mapping = aes(x = train.size, y = test.error,colour = 'test'))
+
+size_knn_2 <- ggplot(data = output_k) + geom_point( mapping = aes(x = K, y = train.tpr,colour = 'train')) + geom_line( mapping = aes(x =K, y = train.tpr,colour = 'train')) + geom_point( mapping = aes(x = K, y = test.tpr,colour = 'test')) + geom_line( mapping = aes(x = K, y = test.tpr,colour = 'test'))
+
+size_knn_3 <- ggplot(data = output_k) + geom_point( mapping = aes(x = K, y = train.ppv,colour = 'train')) + geom_line( mapping = aes(x =K, y = train.ppv,colour = 'train')) + geom_point( mapping = aes(x = K, y = test.ppv,colour = 'test')) + geom_line( mapping = aes(x = K, y = test.ppv,colour = 'test'))
+
+size_knn_plot <- grid.arrange(size_knn_1,size_knn_2,size_knn_3)
+```
+
+#different number of features for KNN
+```{r}
+knn_f <- function(i,getPerformance_f){
+  require(mlr)
+  set.seed(154)
+  train_task <- makeClassifTask(data = new.wine.train[c(1:i,12)], target = "quality")
+  knn_lr <- makeLearner("classif.knn",k =3)
+  model<- mlr::train(knn_lr,train_task)
+  test.pred <- predict(model, newdata = new.wine.test[c(1:i,12)])
+  train.pred <- predict(model, train_task)
+  newrow <- getPerformance_f(train.pred, test.pred, i)
+  rm(test.pred, train.pred, model)
+  rownames(newrow) <- NULL
+  return(newrow)
+}
+
+output_knn_f <- lapply(nfeature,knn_f,getPerformance_f)
+outcome_knn_f <- data.frame()
+for (i in 1:length(output_f)) {
+  outcome_knn_f <- rbind(outcome_knn_f, output_knn_f[[i]])
+}
+
+feature_ann_1 <- ggplot(data = outcome_knn_f) + geom_point( mapping = aes(x = nfeature, y = train.error,colour = 'train')) + geom_line( mapping = aes(x =nfeature, y = train.error,colour = 'train')) + geom_point( mapping = aes(x = nfeature, y = test.error,colour = 'test')) + geom_line( mapping = aes(x = nfeature, y = test.error,colour = 'test'))
+
+feature_ann_2 <- ggplot(data = outcome_knn_f) + geom_point( mapping = aes(x = nfeature, y = train.tpr,colour = 'train')) + geom_line( mapping = aes(x =nfeature, y = train.tpr,colour = 'train')) + geom_point( mapping = aes(x = nfeature, y = test.tpr,colour = 'test')) + geom_line( mapping = aes(x = nfeature, y = test.tpr,colour = 'test'))
+
+feature_ann_3 <- ggplot(data = outcome_knn_f) + geom_point( mapping = aes(x = nfeature, y = train.ppv,colour = 'train')) + geom_line( mapping = aes(x =nfeature, y = train.ppv,colour = 'train')) + geom_point( mapping = aes(x = nfeature, y = test.ppv,colour = 'test')) + geom_line( mapping = aes(x = nfeature, y = test.ppv,colour = 'test'))
+
+feature_knn_plot <- grid.arrange(feature_ann_1,feature_ann_2,feature_ann_3)
+
+
+```
+
+#import data2  
+```{r}
+bank <- read.csv("C:\\Users\\Yao\\Desktop\\dashen's\\bank-additional-full.csv",sep = ";")
+```
+
+## Preprocessing
+### Recode missing values
+```{r}
+for(i in 1:length(bank)){
+  if(class(bank[,i]) == 'factor'){
+    if("unknown"%in%levels(bank[,i])){
+      bank[,i][bank[,i] == 'unknown'] <- NA
+      bank[,i] <- droplevels(bank[,i])
+    }
+  }
+}
+
+bank$y <- factor(bank$y, c("yes", 'no'))
+levels(bank$y)
+```
+
+#build ann model
+```{r}
+set.seed(6397)
+train.sample <- createDataPartition(bank$y, p = 0.75, list = FALSE)
+bank.train <- bank[train.sample,]
+bank.test <- bank[-train.sample,]
+imp <- impute(bank.train,
+            target = 'y',
+           classes = list(factor = imputeMode()),
+           dummy.classes = 'integer')
+bank.test.imp <- reimpute(bank.test, imp$desc)
+train_task_ann <- makeClassifTask(data = imp$data,target = "y")
+t1 <- proc.time()
+output_ann <- lapply(1:6, ann_1, node, act, train_task_ann,bank.test.imp, getPerformance)
+t2 <- proc.time()
+t2 -t1
+```
+#plot
+```{r}
+plot_1.frame <- data.frame()
+for (m in 1:length(output_ann)){
+  for (n in 1:length(output_ann[[m]])){
+    for (r in 1:length(output_ann[[m]][[n]])) {
+      plot_1.frame <- rbind(plot_1.frame,output_ann[[m]][[n]][[r]])
+    }
+       
+  }
+}
+plot_1.frame$act <- as.factor(plot_1.frame$act)
+plot_1.frame$node <- as.numeric(as.character(plot_1.frame$node))
+```
+
+```{r}
+colors <- c("#999999", '#E69F00', '#56B4E9')
+colors <- colors[as.numeric(plot_1.frame$act)]
+ppp <- scatterplot3d(x = plot_1.frame$node, y = plot_1.frame$layer, z = plot_1.frame$test.error, color = colors, pch = 16, type = 'h')
+legend('bottom', legend = levels(plot_1.frame$act), col = c("#999999", '#E69F00', '#56B4E9'), pch = 16, inset = -0.33, xpd = TRUE, horiz = TRUE)
+plot_1.frame[which(plot_1.frame$test.error==min(plot_1.frame$test.error)),]
+```
+
+#build ann model using different size of data
+```{r}
+ann_3 <- function(p, bank, getPerformance_1){
+  require(mlr)
+  set.seed(6397)
+  Partition <- createDataPartition(bank$y, p = p, list = FALSE)
+  bank.train <- bank[Partition, ]
+  bank.test <- bank[-Partition, ]
+  imp <- impute(bank.train,
+              target = 'y',
+             classes = list(factor = imputeMode()),
+             dummy.classes = 'integer')
+  bank.test.imp <- reimpute(bank.test, imp$desc)
+  train_task <- makeClassifTask(data = imp$data, target = "y")
+  newrow <- list()
+  ann_lr <- makeLearner("classif.h2o.deeplearning",hidden = c(9,9,9,9,9),
+                        activation = "Tanh", seed = round(2017*p), reproducible = TRUE, epochs = 20)
+  model<- mlr::train(ann_lr,train_task)
+  test.pred <- predict(model, newdata = bank.test.imp)
+  train.pred <- predict(model, train_task)
+  newrow <- getPerformance_1(train.pred, test.pred, p,  model$time)
+  rm(test.pred, train.pred, model)
+  rownames(newrow) <- NULL
+  return(newrow)
+}
+```
+
+```{r}
+outcome2_size <- lapply(seq(0.3, 0.9, 0.1), ann_3, bank, getPerformance_1)
+```
+
+```{r}
+outcome_size_bank <- data.frame()
+for (i in 1:length(outcome2_size)) {
+  outcome_size_bank <- rbind(outcome_size_bank, outcome2_size[[i]])
+}
+```
+
+```{r}
+size_ann <- ggplot(data = outcome_size_bank) + geom_point( mapping = aes(x = train.size, y = train.error,colour = 'train')) + geom_line( mapping = aes(x =train.size, y = train.error,colour = 'train')) + geom_point( mapping = aes(x = train.size, y = test.error,colour = 'test')) + geom_line( mapping = aes(x = train.size, y = test.error,colour = 'test'))
+size_ann
+```
+
+#normalize the data for knn
+
+```{r}
+getImpNormData <- function(bank, p){
+  dumfea <- c()
+  for (i in 1:length(colnames(bank))) {
+    if(class(bank[[i]])=='factor' & colnames(bank)[i]!='y'){
+      dumfea <- append(dumfea, colnames(bank)[i])
+    }
+  }
+  set.seed(6397)
+  Partition <- createDataPartition(bank$y, p=p, list = FALSE)
+  bank.train.imp <- impute(bank[Partition,],
+                    target = 'y',
+                    classes = list(factor = imputeMode()))
+  bank.test.imp <- reimpute(bank[-Partition,], bank.train.imp$desc)
+  bank.imp <- rbind(bank.train.imp$data, bank.test.imp)
+  new.bank <- createDummyFeatures(bank.imp, target = 'y', method = 'reference', cols = dumfea)
+  new.bank <- normalizeFeatures(new.bank, target = 'y')
+  new.Partition <- 1:length(Partition)
+  new.bank.train <- new.bank[new.Partition,]
+  new.bank.test <- new.bank[-new.Partition,]
+  return(list(new.bank.train, new.bank.test))
+}
+```
+
+
+#Knn with different k
+```{r}
+new.bank <- getImpNormData(bank = bank)
+new.bank.train <- new.bank[[1]]
+new.bank.test <- new.bank[[2]]
+nk <- seq(2,10,1)
+kn_bank <- list()
+getParamSet("classif.knn")
+
+bank.train_task_knn <- makeClassifTask(data = new.bank.train, target = "y")
+
+
+knn_k <- function(q, bank.train_task_knn, new.bank.test, getPerformance_k){
+  set.seed(2017)
+  require(mlr)
+  knn_k <- makeLearner("classif.knn",k = q)
+  model<- mlr::train(knn_k,bank.train_task_knn)
+  test.pred <- predict(model, newdata = new.bank.test)
+  train.pred <- predict(model, bank.train_task_knn)
+  newrow <- getPerformance_k(train.pred, test.pred, q, model$time)
+  rm(test.pred, train.pred, model)
+  rownames(newrow) <- NULL
+  return(newrow)
+}
+```
+
+```{r}
+t1 <- proc.time()
+cl <- makeCluster(max(detectCores()-1, 1))
+knn_list<- parLapply(cl, nk, knn_k, bank.train_task_knn, new.bank.test, getPerformance_k)
+stopCluster(cl)
+t2 <- proc.time()
+t2 -t1
+```
+
+```{r}
+output_bank_k <- data.frame()
+for (i in 1:length(knn_list)) {
+  output_bank_k <- rbind(output_bank_k, knn_list[[i]])
+}
+```
+
+
+```{r}
+bank.knn.p <- ggplot(data = output_bank_k) + geom_point( mapping = aes(x = K, y = train.error,colour = 'train')) + geom_line( mapping = aes(x = K, y = train.error,colour = 'train')) + geom_point( mapping = aes(x = K, y = test.error,colour = 'test')) + geom_line( mapping = aes(x = K, y = test.error,colour = 'test'))
+bank.knn.p
+```
+
+
+#different train size for knn
+```{r}
+bank.knn_size <- function(p, bank, getImpNormData, getPerformance_k_1){
+  require(mlr)
+  require(caret)
+  set.seed(6397)
+  new.bank <- getImpNormData(bank = bank, p)
+  new.bank.train <- new.bank[[1]]
+  new.bank.test <- new.bank[[2]]
+  train_task <- makeClassifTask(data = new.bank.train , target = "y")
+  newrow <- list()
+  knn_k <- makeLearner("classif.knn",k = 5)
+  model<- mlr::train(knn_k,train_task)
+  test.pred <- predict(model, newdata = new.bank.test)
+  train.pred <- predict(model, train_task)
+  newrow <- getPerformance_k_1(train.pred, test.pred, p, 3, model$time)
+  rm(test.pred, train.pred, model)
+  return(newrow)
+}
+```
+
+```{r}
+t1 <- proc.time()
+cl <- makeCluster(max(detectCores()-1, 1))
+bank.outcome_knn_size_l <- parLapply(cl, seq(0.3,0.9,0.1), bank.knn_size, bank, getImpNormData, getPerformance_k_1)
+stopCluster(cl)
+t2 <- proc.time()
+t2 - t1
+```
+
+
+```{r}
+bank.outcome_knn <- data.frame()
+for (i in 1:length(bank.outcome_knn_size_l)) {
+  bank.outcome_knn <- rbind(bank.outcome_knn, bank.outcome_knn_size_l[[i]])
+}
+bank.size_knn <- ggplot(data = bank.outcome_knn) + geom_point( mapping = aes(x = train.size, y = train.error,colour = 'train')) + geom_line( mapping = aes(x =train.size, y = train.error,colour = 'train')) + geom_point( mapping = aes(x = train.size, y = test.error,colour = 'test')) + geom_line( mapping = aes(x = train.size, y = test.error,colour = 'test'))
+bank.size_knn
+```
+
+#different number of features for ann
+```{r}
+nfeature_2 <- seq(2,20,1)
+ann_f_2 <- function(i, getPerformance_f){
+  require(mlr)
+  set.seed(6397)
+  imp <- impute(bank.train,
+              target = 'y',
+             classes = list(factor = imputeMode()),
+             dummy.classes = 'integer')
+  bank.test.imp <- reimpute(bank.test, imp$desc)
+  train_task <- makeClassifTask(data = imp$data[c(1:i,21)], target = "y")
+  newrow <- list()
+  ann_lr <- makeLearner("classif.h2o.deeplearning",hidden = c(9,9,9,9,9),
+                        activation = "Tanh", seed = round(2017), reproducible = TRUE, epochs = 20)
+  model<- mlr::train(ann_lr,train_task)
+  test.pred <- predict(model, newdata = bank.test.imp[c(1:i,21)])
+  train.pred <- predict(model, train_task)
+  newrow <- getPerformance_f(train.pred, test.pred, i,  model$time)
+  rm(test.pred, train.pred, model)
+  rownames(newrow) <- NULL
+  return(newrow)
+}
+
+output_f_2 <- lapply(nfeature_2,ann_f_2,getPerformance_f)
+outcome_f_2 <- data.frame()
+for (i in 1:length(output_f_2)) {
+  outcome_f_2 <- rbind(outcome_f_2, output_f_2[[i]])
+}
+names(outcome_f_2)[1] = "nfeature"
+feature_ann_2 <- ggplot(data = outcome_f_2) + geom_point( mapping = aes(x = nfeature, y = train.error,colour = 'train')) + geom_line( mapping = aes(x =nfeature, y = train.error,colour = 'train')) + geom_point( mapping = aes(x = nfeature, y = test.error,colour = 'test')) + geom_line( mapping = aes(x = nfeature, y = test.error,colour = 'test'))
+feature_ann_2
+```
+ 
+```
+
