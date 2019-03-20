@@ -1,0 +1,10 @@
+# "R version 3.4.2 (2017-09-28)" #
+
+
+# install.packages("clValid")
+# install.packages("clusterSim")
+# install.packages("clue")
+# install.packages("FSelector")
+# install.packages("fastICA")
+# install.packages("RandPro")
+# install.packages("mclust")  in lower R version , you might use install.packages("Mclust")
